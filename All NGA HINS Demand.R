@@ -2,6 +2,7 @@ library(ggplot2)
 library(tidyr)
 library(dplyr)
 library(scales)
+library(lamW)  # Required for Lambert W function
 
 # Read the data
 data <- read.csv("~/Downloads/Agg_percentage_analysis.csv")
@@ -15,18 +16,31 @@ Koff <- function(x, alpha, Qo, data) {
   Qo * 10^(k * (exp(-alpha * Qo * x) - 1))
 }
 
-# Function to calculate Pmax
+# CORRECTED Function to calculate Pmax using Lambert W
 calculate_pmax <- function(alpha, Qo, data) {
   k <- log10(max(data$x[!is.na(data$All)])) - log10(min(data$x[!is.na(data$All)]))
+  
   # Add check for valid inputs
   if(alpha <= 0 || Qo <= 0 || k <= 0) {
     return(NA)
   }
-  pmax <- (1/log(10^k))/(alpha * Qo)
-  # Check if pmax is within the data range
-  if(pmax < min(data$x, na.rm = TRUE) || pmax > max(data$x, na.rm = TRUE)) {
+  
+  # Check if k is above minimum threshold (1.180535)
+  if(k <= 1.180535) {
+    warning("k value is too small for Lambert W calculation")
     return(NA)
   }
+  
+  # CORRECTED FORMULA: -W(-1/(ln(10^k))) / (alpha * Q0)
+  # ln(10^k) = k * ln(10)
+  pmax <- -lambertW0(-1 / (k * log(10))) / (alpha * Qo)
+  
+  # Check if pmax is within the data range
+  if(pmax < min(data$x, na.rm = TRUE) || pmax > max(data$x, na.rm = TRUE)) {
+    warning("Pmax is outside the observed data range")
+    # Still return it but with a warning
+  }
+  
   return(pmax)
 }
 
@@ -58,7 +72,15 @@ fit_and_calculate_rsq <- function(data) {
     params <- coef(fit)
     pmax <- calculate_pmax(params["alpha"], params["Qo"], valid_data)
     
+    # Also calculate k for display
+    k <- log10(max(valid_data$x[!is.na(valid_data$All)])) - 
+         log10(min(valid_data$x[!is.na(valid_data$All)]))
+    
     cat("R-squared =", round(r_squared, 4), "\n")
+    cat("k =", round(k, 4), "\n")
+    cat("alpha =", format(params["alpha"], scientific = TRUE), "\n")
+    cat("Q0 =", round(params["Qo"], 2), "\n")
+    
     if(!is.na(pmax)) {
       cat("Pmax =", round(pmax, 2), "\n")
     } else {
@@ -89,7 +111,11 @@ create_plot <- function(data, fit_results) {
   # Add vertical line for Pmax if it exists and is within the plot range
   if (!is.null(fit_results$pmax) && !is.na(fit_results$pmax)) {
     if(fit_results$pmax >= min(valid_data$x) && fit_results$pmax <= max(valid_data$x)) {
-      p <- p + geom_vline(xintercept = fit_results$pmax, linetype = "dashed", color = "grey1", alpha = 0.5)
+      p <- p + geom_vline(xintercept = fit_results$pmax, linetype = "dashed", 
+                          color = "grey1", alpha = 0.5) +
+               annotate("text", x = fit_results$pmax, y = max(valid_data$All, na.rm = TRUE),
+                       label = paste0("Pmax = ", round(fit_results$pmax, 0)),
+                       hjust = -0.1, vjust = 1)
     }
   }
   
